@@ -98,9 +98,9 @@ player's earlier season rows already in the file.
 
 **Known gap:** `retire_pitching.csv` expects a `gs_lead` column that
 doesn't exist anywhere in the `leagueleaders_pitching` export (it has
-`g_lead` but not `gs_lead`). The script leaves it blank rather than
-guessing — worth confirming with whoever set up the original site
-where that value was supposed to come from.
+`g_lead` but not `gs_lead`). Travis (league admin) confirmed he's been
+filling that column with `0` by hand, so the script does the same —
+it's not computed from real data, just matched to existing convention.
 
 ### Options
 
