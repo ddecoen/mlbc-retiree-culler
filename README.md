@@ -19,7 +19,46 @@ from wherever it currently comes from (the sim engine export, or a
 manual process). The script only extracts and archives the stat lines
 for players already on that list.
 
-## Requirements
+## Two ways to run this
+
+**1. GUI (for the league admin, no Python needed)**
+
+A Windows program (`MLBC Retiree Updater.exe`) wraps this script in a
+point-and-click window — pick the season folder, pick the four site
+files, click "Run Update." See **"For the league admin"** below.
+
+**2. Command line (for anyone with Python + pandas)**
+
+Everything below this section covers the command-line version.
+
+## For the league admin
+
+You don't need Python, git, or a command line for this — just the
+`.exe`:
+
+1. Go to the repo's **Actions** tab → **Build Windows executable** →
+   the latest successful run → download the
+   **MLBC-Retiree-Updater-windows** artifact (a `.zip` containing the
+   `.exe`).
+2. Unzip it and double-click **MLBC Retiree Updater.exe**.
+3. Windows will likely show a **"Windows protected your PC"**
+   SmartScreen warning, since the file isn't code-signed. Click
+   **"More info"** → **"Run anyway."** This is normal for a small
+   independent tool like this one — it isn't a virus warning, just
+   Windows being cautious about unsigned programs.
+4. In the window: browse to the folder with this season's export
+   files (it detects the year automatically), then browse to your
+   four site files — `CareerBatStat_retired.csv`,
+   `CareerPitStat_retired.csv`, `retire_batting.csv`,
+   `retire_pitching.csv`. These four are remembered after the first
+   run, so next season you'll only need to redo step 4's first part.
+5. Click **Run Update**. When it says "Done," upload those same four
+   files to the site the same way you always have.
+
+If anything goes wrong, the log box in the window shows exactly what
+happened — screenshot it and send it back for help.
+
+## Requirements (command-line version)
 
 - Python 3.9+
 - `pandas` (`pip install pandas`)

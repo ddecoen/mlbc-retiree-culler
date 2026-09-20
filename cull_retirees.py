@@ -170,9 +170,9 @@ def append_to_cumulative(filtered: pd.DataFrame, target_path: Path, label: str, 
     """
     key_cols = key_cols or [filtered.columns[0]]
 
-    if not target_path.exists():
+    if not target_path.exists() or target_path.stat().st_size == 0:
         filtered.to_csv(target_path, index=False, header=False)
-        print(f"  Append ({label}): {target_path.name} didn't exist — created it with "
+        print(f"  Append ({label}): {target_path.name} didn't exist (or was empty) — created it with "
               f"{len(filtered)} row(s), no header (matches raw export convention)")
         return
 
