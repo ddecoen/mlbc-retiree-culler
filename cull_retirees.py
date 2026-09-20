@@ -25,6 +25,14 @@ Usage:
     # also load results into a SQLite analytics DB (accumulates history)
     python cull_retirees.py --year 2081 --input-dir . --db mlbc_players.db
 
+    # also append this season's retirees onto the site's cumulative files
+    # (CareerBatStat_retired.csv / CareerPitStat_retired.csv) so they're
+    # ready to drop straight into the PHP import — skips anyone already
+    # present, and matches whatever header convention the file already uses
+    python cull_retirees.py --year 2081 --input-dir . \
+        --append-batting /path/to/CareerBatStat_retired.csv \
+        --append-pitching /path/to/CareerPitStat_retired.csv
+
 Expected input filenames in --input-dir (same convention as before):
     retirements_{year}.csv           (fn, ln, team, oldid)
     CareerBatStat{year}.csv          (ID, ...)
@@ -104,6 +112,48 @@ def process_stat_file(
     return filtered
 
 
+def append_to_cumulative(filtered: pd.DataFrame, target_path: Path, label: str):
+    """Append this season's retiree rows onto an existing cumulative file
+    (e.g. CareerBatStat_retired.csv), skipping IDs already present.
+    Auto-detects whether the existing file has a header row by sniffing
+    whether its first cell parses as a number, and writes back in the
+    same convention so it stays a drop-in replacement for the PHP import.
+    """
+    id_col = filtered.columns[0]  # "ID" — first column in the raw export
+
+    if not target_path.exists():
+        filtered.to_csv(target_path, index=False, header=False)
+        print(f"  Append ({label}): {target_path.name} didn't exist — created it with "
+              f"{len(filtered)} row(s), no header (matches raw export convention)")
+        return
+
+    with open(target_path) as f:
+        first_line = f.readline().strip()
+    first_cell = first_line.split(",")[0].strip('"')
+    has_header = not first_cell.lstrip("-").isdigit()
+
+    existing = pd.read_csv(target_path, header=0 if has_header else None)
+    if len(existing.columns) != len(filtered.columns):
+        print(f"  WARNING ({label}): {target_path.name} has {len(existing.columns)} columns, "
+              f"but the source export has {len(filtered.columns)}. Skipping append — "
+              f"check the file format before running again.")
+        return
+    existing.columns = filtered.columns
+
+    existing_ids = set(existing[id_col].astype(str))
+    new_rows = filtered[~filtered[id_col].astype(str).isin(existing_ids)]
+
+    if new_rows.empty:
+        print(f"  Append ({label}): no new retirees to add to {target_path.name} "
+              f"(all {len(filtered)} already present)")
+        return
+
+    combined = pd.concat([existing, new_rows], ignore_index=True)
+    combined.to_csv(target_path, index=False, header=has_header)
+    print(f"  Append ({label}): added {len(new_rows)} new row(s) to {target_path.name} "
+          f"(header={'yes' if has_header else 'no'}, now {len(combined)} total rows)")
+
+
 def load_into_db(db_path: Path, year: int, results: dict):
     conn = sqlite3.connect(db_path)
     for label, df in results.items():
@@ -135,6 +185,10 @@ def main():
                          help="Where to write _RET_ CSVs (default: same as --input-dir)")
     parser.add_argument("--db", type=Path, default=None,
                          help="Optional path to a SQLite DB to load results into (accumulates across seasons)")
+    parser.add_argument("--append-batting", type=Path, default=None,
+                         help="Path to the site's cumulative CareerBatStat_retired.csv to append this season's retirees onto")
+    parser.add_argument("--append-pitching", type=Path, default=None,
+                         help="Path to the site's cumulative CareerPitStat_retired.csv to append this season's retirees onto")
     args = parser.parse_args()
 
     input_dir = args.input_dir
@@ -158,6 +212,19 @@ def main():
         print(f"\nWARNING: {len(unmatched)} retired ID(s) had no rows in ANY stat file "
               f"(likely never played a game, or an ID mismatch — worth a manual check):")
         print(unmatched_rows.to_string(index=False))
+
+    if args.append_batting or args.append_pitching:
+        print()
+    if args.append_batting:
+        if results.get("career_batting") is not None:
+            append_to_cumulative(results["career_batting"], args.append_batting, "career_batting")
+        else:
+            print(f"  Append (career_batting): skipped — CareerBatStat{args.year}.csv was not found")
+    if args.append_pitching:
+        if results.get("career_pitching") is not None:
+            append_to_cumulative(results["career_pitching"], args.append_pitching, "career_pitching")
+        else:
+            print(f"  Append (career_pitching): skipped — CareerPitStat{args.year}.csv was not found")
 
     if args.db:
         print(f"\nLoading results into {args.db} ...")
