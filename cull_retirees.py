@@ -33,6 +33,14 @@ Usage:
         --append-batting /path/to/CareerBatStat_retired.csv \
         --append-pitching /path/to/CareerPitStat_retired.csv
 
+    # also append this season's retirees' season-by-season lines onto
+    # retire_batting.csv / retire_pitching.csv, remapped to that file's
+    # narrower column set (drops the _rank/rookie/league columns and
+    # reorders the rest to match)
+    python cull_retirees.py --year 2081 --input-dir . \
+        --append-retire-batting /path/to/retire_batting.csv \
+        --append-retire-pitching /path/to/retire_pitching.csv
+
 Expected input filenames in --input-dir (same convention as before):
     retirements_{year}.csv           (fn, ln, team, oldid)
     CareerBatStat{year}.csv          (ID, ...)
@@ -56,6 +64,29 @@ STAT_FILES = [
      "_RET_leagueleaders_batting{year}.csv"),
     ("league_leaders_pitching", "leagueleaders_pitching_{year}.csv", "id",
      "_RET_leagueleaders_pitching{year}.csv"),
+]
+
+# Column order for the site's cumulative retire_batting.csv / retire_pitching.csv,
+# confirmed against real samples of those files. These are a subset of the raw
+# leagueleaders_batting/pitching columns (all the _rank / rookie / league-rank /
+# rook,league,name,fn,ln,num,lvl,team,eligible,pfa columns are dropped) in a
+# different order. Any column here not found in the source export is left blank
+# in-output. Currently that's "gs_lead" for pitching, which doesn't exist
+# in the leagueleaders_pitching export — Travis (league admin) confirmed
+# he's been filling that column with 0 by hand, so we match that.
+RETIRE_BATTING_COLUMNS = [
+    "id", "year", "level", "g", "ab", "abbb", "avg", "obp", "slg", "ops", "fpoints",
+    "h", "b2", "b3", "hr", "bb", "so", "rbi", "sb", "cs", "r", "u1", "hbp", "gidp",
+    "ibb", "sf", "sh", "pab", "phit",
+    "avg_lead", "obp_lead", "slg_lead", "ab_lead", "h_lead", "b2_lead", "b3_lead",
+    "hr_lead", "r_lead", "rbi_lead", "bb_lead", "so_lead", "sb_lead", "cs_lead",
+]
+RETIRE_PITCHING_COLUMNS = [
+    "id", "year", "level", "outs", "ip", "whip", "era", "pops", "ptb", "fpoints",
+    "h", "b2", "b3", "hr", "bb", "k", "er", "r", "sb", "cs", "w", "l", "sv", "bs",
+    "cg", "sho", "gs", "u1", "g", "u2", "bk", "hb", "wp", "u3", "hld", "qs", "pitch_num",
+    "era_lead", "w_lead", "l_lead", "sv_lead", "bs_lead", "g_lead", "gs_lead",
+    "cg_lead", "sho_lead", "ip_lead", "k_lead", "pops_lead", "whip_lead",
 ]
 
 
@@ -112,14 +143,32 @@ def process_stat_file(
     return filtered
 
 
-def append_to_cumulative(filtered: pd.DataFrame, target_path: Path, label: str):
-    """Append this season's retiree rows onto an existing cumulative file
-    (e.g. CareerBatStat_retired.csv), skipping IDs already present.
+def remap_columns(df: pd.DataFrame, dest_columns: list, label: str) -> pd.DataFrame:
+    """Reduce/reorder a raw leagueleaders_* export down to the narrower
+    column set the site's retire_batting/retire_pitching files use.
+    Any dest column not present in the source is filled with 0, matching
+    the site's existing convention for columns it doesn't track upstream."""
+    missing = [c for c in dest_columns if c not in df.columns]
+    if missing:
+        print(f"  NOTE ({label}): source export has no column(s) {missing} — "
+              f"filled with 0 in the output (matches site convention).")
+    out = pd.DataFrame(index=df.index)
+    for col in dest_columns:
+        out[col] = df[col] if col in df.columns else 0
+    return out
+
+
+def append_to_cumulative(filtered: pd.DataFrame, target_path: Path, label: str, key_cols: list = None):
+    """Append this season's rows onto an existing cumulative file
+    (e.g. CareerBatStat_retired.csv or retire_batting.csv), skipping rows
+    already present (matched on key_cols — defaults to just the first
+    column, e.g. player ID; pass ["id", "year"] for season-level files
+    where the same player has one row per season).
     Auto-detects whether the existing file has a header row by sniffing
     whether its first cell parses as a number, and writes back in the
     same convention so it stays a drop-in replacement for the PHP import.
     """
-    id_col = filtered.columns[0]  # "ID" — first column in the raw export
+    key_cols = key_cols or [filtered.columns[0]]
 
     if not target_path.exists():
         filtered.to_csv(target_path, index=False, header=False)
@@ -140,12 +189,13 @@ def append_to_cumulative(filtered: pd.DataFrame, target_path: Path, label: str):
         return
     existing.columns = filtered.columns
 
-    existing_ids = set(existing[id_col].astype(str))
-    new_rows = filtered[~filtered[id_col].astype(str).isin(existing_ids)]
+    existing_keys = set(existing[key_cols].astype(str).agg("|".join, axis=1))
+    filtered_keys = filtered[key_cols].astype(str).agg("|".join, axis=1)
+    new_rows = filtered[~filtered_keys.isin(existing_keys)]
 
     if new_rows.empty:
-        print(f"  Append ({label}): no new retirees to add to {target_path.name} "
-              f"(all {len(filtered)} already present)")
+        print(f"  Append ({label}): no new rows to add to {target_path.name} "
+              f"(all {len(filtered)} already present, matched on {key_cols})")
         return
 
     combined = pd.concat([existing, new_rows], ignore_index=True)
@@ -189,6 +239,10 @@ def main():
                          help="Path to the site's cumulative CareerBatStat_retired.csv to append this season's retirees onto")
     parser.add_argument("--append-pitching", type=Path, default=None,
                          help="Path to the site's cumulative CareerPitStat_retired.csv to append this season's retirees onto")
+    parser.add_argument("--append-retire-batting", type=Path, default=None,
+                         help="Path to the site's retire_batting.csv (season-level, narrower column set) to append this season's retirees onto")
+    parser.add_argument("--append-retire-pitching", type=Path, default=None,
+                         help="Path to the site's retire_pitching.csv (season-level, narrower column set) to append this season's retirees onto")
     args = parser.parse_args()
 
     input_dir = args.input_dir
@@ -225,6 +279,19 @@ def main():
             append_to_cumulative(results["career_pitching"], args.append_pitching, "career_pitching")
         else:
             print(f"  Append (career_pitching): skipped — CareerPitStat{args.year}.csv was not found")
+
+    if args.append_retire_batting:
+        if results.get("league_leaders_batting") is not None:
+            remapped = remap_columns(results["league_leaders_batting"], RETIRE_BATTING_COLUMNS, "retire_batting")
+            append_to_cumulative(remapped, args.append_retire_batting, "retire_batting", key_cols=["id", "year"])
+        else:
+            print(f"  Append (retire_batting): skipped — leagueleaders_batting_{args.year}.csv was not found")
+    if args.append_retire_pitching:
+        if results.get("league_leaders_pitching") is not None:
+            remapped = remap_columns(results["league_leaders_pitching"], RETIRE_PITCHING_COLUMNS, "retire_pitching")
+            append_to_cumulative(remapped, args.append_retire_pitching, "retire_pitching", key_cols=["id", "year"])
+        else:
+            print(f"  Append (retire_pitching): skipped — leagueleaders_pitching_{args.year}.csv was not found")
 
     if args.db:
         print(f"\nLoading results into {args.db} ...")

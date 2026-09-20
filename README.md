@@ -80,11 +80,27 @@ it's created fresh. Column count is checked before writing — if it
 doesn't match the source export, nothing is appended and you get a
 warning instead of a corrupted file.
 
-**Not yet handled:** `leagueleaders_batting`/`leagueleaders_pitching`
-apparently need some column reordering before they match the shape of
-`retire_batting` on the site — that mapping isn't automated yet, since
-we don't have both column layouts side by side. Only the career
-batting/pitching append is automated so far.
+The league-leader files get the same treatment, but need remapping
+first — `retire_batting.csv`/`retire_pitching.csv` use a narrower,
+reordered column set than the raw `leagueleaders_batting`/`pitching`
+exports (all the `_rank`/rookie/league-rank columns are dropped):
+
+```bash
+python cull_retirees.py --year 2081 --input-dir . \
+    --append-retire-batting /path/to/retire_batting.csv \
+    --append-retire-pitching /path/to/retire_pitching.csv
+```
+
+Since these are season-by-season rows (one row per player per season,
+not one row per player), duplicates are checked on `(id, year)` rather
+than `id` alone, so appending a new season never collides with a
+player's earlier season rows already in the file.
+
+**Known gap:** `retire_pitching.csv` expects a `gs_lead` column that
+doesn't exist anywhere in the `leagueleaders_pitching` export (it has
+`g_lead` but not `gs_lead`). The script leaves it blank rather than
+guessing — worth confirming with whoever set up the original site
+where that value was supposed to come from.
 
 ### Options
 
@@ -96,6 +112,8 @@ batting/pitching append is automated so far.
 | `--db` | no | Path to a SQLite DB to load results into |
 | `--append-batting` | no | Path to the cumulative `CareerBatStat_retired.csv` to append this season's retirees onto |
 | `--append-pitching` | no | Path to the cumulative `CareerPitStat_retired.csv` to append this season's retirees onto |
+| `--append-retire-batting` | no | Path to `retire_batting.csv` (season-level, narrower columns) to append this season's retirees onto |
+| `--append-retire-pitching` | no | Path to `retire_pitching.csv` (season-level, narrower columns) to append this season's retirees onto |
 
 ## What changed vs. the old workbook
 
