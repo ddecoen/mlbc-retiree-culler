@@ -125,9 +125,25 @@ def process_stat_file(
         print(f"SKIP: {label} — file not found: {in_path.name}")
         return None
 
-    df = pd.read_csv(in_path)
+    try:
+        df = pd.read_csv(in_path)
+    except (UnicodeDecodeError, pd.errors.ParserError) as e:
+        print(f"SKIP: {label} — {in_path.name} could not be read as a CSV "
+              f"({type(e).__name__}: it may be corrupted or in the wrong format). "
+              f"Get a fresh copy of this file and re-run for this year.")
+        return None
     if id_col not in df.columns:
-        sys.exit(f"ERROR: {in_path.name} has no '{id_col}' column — check the export format")
+        # Some seasons' exports capitalize the ID column differently
+        # (e.g. "ID" instead of "id") — match case-insensitively before
+        # giving up, since this is a real inconsistency we've seen in
+        # practice, not a sign of a genuinely different file format.
+        case_match = next((c for c in df.columns if c.lower() == id_col.lower()), None)
+        if case_match:
+            df = df.rename(columns={case_match: id_col})
+        else:
+            print(f"SKIP: {label} — {in_path.name} has no '{id_col}' column — "
+                  f"check the export format. Other files for this year were still processed.")
+            return None
 
     filtered = df[df[id_col].isin(retired_ids)].copy()
 
@@ -146,15 +162,20 @@ def process_stat_file(
 def remap_columns(df: pd.DataFrame, dest_columns: list, label: str) -> pd.DataFrame:
     """Reduce/reorder a raw leagueleaders_* export down to the narrower
     column set the site's retire_batting/retire_pitching files use.
-    Any dest column not present in the source is filled with 0, matching
-    the site's existing convention for columns it doesn't track upstream."""
-    missing = [c for c in dest_columns if c not in df.columns]
+    Matches column names case-insensitively (some seasons' exports use
+    "Year"/"ID" instead of "year"/"id") before concluding a column is
+    truly absent. Any dest column genuinely not present in the source
+    is filled with 0, matching the site's existing convention for
+    columns it doesn't track upstream."""
+    col_lookup = {c.lower(): c for c in df.columns}
+    missing = [c for c in dest_columns if c.lower() not in col_lookup]
     if missing:
         print(f"  NOTE ({label}): source export has no column(s) {missing} — "
               f"filled with 0 in the output (matches site convention).")
     out = pd.DataFrame(index=df.index)
     for col in dest_columns:
-        out[col] = df[col] if col in df.columns else 0
+        src_col = col_lookup.get(col.lower())
+        out[col] = df[src_col] if src_col is not None else 0
     return out
 
 
